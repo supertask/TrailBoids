@@ -1,5 +1,7 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
+using Leap;
+using Leap.Unity;
 
 namespace TrailBoids
 {
@@ -15,12 +17,17 @@ namespace TrailBoids
 
         [SerializeField] float _rotationSpeed = 4;
         [SerializeField] float _neighborDistance = 2;
+
         #endregion
 
-        Path path;
-        Vector3 leaderPosition;
-        Vector3 leaderDirection;
-        float animeRate;
+        //PathX path;
+        //Vector3 leaderPosition;
+        //Vector3 leaderDirection;
+        //float animeRate;
+        InteractivePath ipath = new InteractivePath();
+        LeapServiceProvider m_Provider;
+        float timeLeft;
+
         //Vector3 currentDirection; // Vector3.up; //Vector3.forward;
         //Vector3 currentPosition;
 
@@ -38,6 +45,78 @@ namespace TrailBoids
 
         #endregion
 
+        #region MonoBehaviour implementation
+
+        void Start()
+        {
+            //this.path = new PathX();
+            //this.animeRate = 0.0f;
+            this.timeLeft = 0.0f;
+            this.ipath = new InteractivePath();
+            this.m_Provider = GameObject.Find("LeapHandController").GetComponent<LeapServiceProvider>();
+
+            _template = transform.GetChild(0).gameObject; //パーティクルをとってくる
+            _template.SetActive(false);
+
+            for (var i = 0; i < _spawnCount; i++) Spawn();
+        }
+
+        private Hand GetHand() {
+            Frame frame = this.m_Provider.CurrentFrame;
+            foreach (Hand hand in frame.Hands) {
+                if (hand.IsLeft) { return hand; }
+            }
+            return null;
+        }
+
+        Vector3 ToVector3(Vector v) { return new Vector3(v.x, v.y, v.z); }
+
+        void Update()
+        {
+            this.timeLeft -= Time.deltaTime;
+
+            if (this.timeLeft <= 0.0f) {
+                this.timeLeft = 0.08f;
+                Hand hand = this.GetHand();
+                if (hand != null) {
+                    Vector3 leapPosition = this.ToVector3(hand.PalmPosition);
+                    Vector3 leapVelocity = this.ToVector3(hand.PalmVelocity);
+                    Vector3 offset = leapPosition - this.ipath.lastPosition;
+                    if (offset.sqrMagnitude > 0.09f) { //0.3f*0.3f <- 決め打ち
+                        this.ipath.SetPosition(leapPosition);
+                        this.ipath.lastPosition = leapPosition;
+                        this.ipath.SetDirection(leapVelocity.normalized);
+                        this.ipath.SetVelocity(leapVelocity.magnitude); //長さ
+                        Debug.Log("actual pos: " + leapPosition);
+                        Debug.Log("actual velocity: " + leapVelocity.normalized);
+                    }
+                    /*
+                    offset = leapVelocity - Vector3.zero;
+                    if (offset.sqrMagnitude > 2.0f) { //1.5f*1.5f <- 決め打ち
+                    }
+                    */
+                    //Debug.Log("pos: " + this.ipath.GetPosition());
+                    //Debug.Log("velocity: " + this.ipath.GetDirection());
+                    Debug.Log("---");
+                }
+            }
+
+            foreach (var boid in _boids) SteerBoid(boid);
+            foreach (var boid in _boids) AdvanceBoid(boid);
+            //'foreach (var boid in _boids) PathFollowing(boid);
+
+            foreach (var boid in _boids) {
+                var tr = boid.gameObject.transform;
+                tr.position = boid.position;
+                tr.rotation = boid.rotation;
+            }
+
+            //this.animeRate+=0.005f;
+            //this.trackTurn += 0.001f;
+        }
+        #endregion
+
+
         #region Boid behavior
 
         // Calculates a separation vector from a boid with another boid.
@@ -53,7 +132,7 @@ namespace TrailBoids
         void SteerBoid(Boid self)
         {
             //velocityを変更
-            Vector3 v = this.leaderDirection * -9.0f; //this.path.GetCurrentVelocity();
+            Vector3 v = this.ipath.GetDirection() * -9.0f; //this.path.GetCurrentVelocity();
             ParticleSystem.VelocityOverLifetimeModule velocity = self.gameObject.GetComponent<ParticleSystem>().velocityOverLifetime;
             velocity.x = v.x; velocity.y = v.y; velocity.z = v.z;
             var particle = self.gameObject.GetComponent<ParticleSystem>();
@@ -66,9 +145,9 @@ namespace TrailBoids
             // Steering vectors
             var separation = Vector3.zero;
             //var alignment = transform.up;
-            var alignment = this.leaderDirection;
+            var alignment = this.ipath.GetDirection();
             //var cohesion = new Vector3(0,40,0); //transform.position;
-            var cohesion = this.leaderPosition;
+            var cohesion = this.ipath.GetPosition();
 
             // Looks up nearby boids.
             var neighborCount = 0;
@@ -81,7 +160,7 @@ namespace TrailBoids
 
                 // Influence from this boid
                 separation += GetSeparationVector(self, neighbor);
-                alignment += neighbor.rotation * this.path.GetDirection();
+                alignment += neighbor.rotation * this.ipath.GetDirection();
                 cohesion += neighbor.position;
 
                 neighborCount++;
@@ -94,7 +173,7 @@ namespace TrailBoids
 
             // Calculate the target direction and convert to quaternion.
             var direction = separation + alignment * 0.667f + cohesion;
-            var rotation = Quaternion.FromToRotation(this.path.GetDirection(), direction.normalized);
+            var rotation = Quaternion.FromToRotation(this.ipath.GetDirection(), direction.normalized);
 
             // Applys the rotation with interpolation.
             if (rotation != self.rotation)
@@ -126,7 +205,7 @@ namespace TrailBoids
 
             //velocity += this.Accelerate(self);
 
-            var forward = self.rotation * this.path.GetDirection();
+            var forward = self.rotation * this.ipath.GetDirection();
             //self.position += (forward * velocity + _scroll) * Time.deltaTime;
             //self.position += (forward * velocity) * Time.deltaTime; //スクロール０
             var deltaPosition = (forward * velocity) * Time.deltaTime;
@@ -161,46 +240,18 @@ namespace TrailBoids
 
         #endregion
 
-        #region MonoBehaviour implementation
-
-        void Start()
-        {
-            this.path = new Path();
-            this.animeRate = 0.0f;
-
-            _template = transform.GetChild(0).gameObject; //パーティクルをとってくる
-            _template.SetActive(false);
-
-            for (var i = 0; i < _spawnCount; i++) Spawn();
-        }
-
-        void Update()
-        {
-            if (animeRate > 1.0f) {
+        /*
+        private void updatePosition() {
+            if (this.animeRate > 1.0f)
+            {
                 this.path.currentIndex = (this.path.currentIndex + 1) % path.GetCount();
                 this.animeRate = 0.0f;
             }
-            Debug.Log("rate: " + this.animeRate);
             this.leaderPosition = Vector3.Lerp(
                 this.path.GetPosition(), this.path.GetNextPosition(), this.animeRate
             );
-            Debug.Log("position: " + this.leaderPosition);
             this.leaderDirection = this.path.GetDirection();
-            GameObject.Find("LeaderNode").transform.position = this.leaderPosition;
-
-            foreach (var boid in _boids) SteerBoid(boid);
-            foreach (var boid in _boids) AdvanceBoid(boid);
-            //'foreach (var boid in _boids) PathFollowing(boid);
-
-            foreach (var boid in _boids) {
-                var tr = boid.gameObject.transform;
-                tr.position = boid.position;
-                tr.rotation = boid.rotation;
-            }
-
-            this.animeRate+=0.005f;
         }
-
-        #endregion
+        */
     }
 }

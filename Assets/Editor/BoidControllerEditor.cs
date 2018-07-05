@@ -16,6 +16,7 @@ namespace TrailBoids
 
         SerializedProperty _rotationSpeed;
         SerializedProperty _neighborDistance;
+        SerializedProperty _m_ProviderObject;
 
         static class Styles
         {
